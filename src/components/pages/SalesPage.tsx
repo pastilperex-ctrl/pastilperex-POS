@@ -110,14 +110,27 @@ export default function SalesPage() {
     return item.qty // pieces
   }
 
-  // Calculate product cost based on ingredients + OPEX
+  // Check if product is out of stock (any ingredient has 0 stock)
+  const isProductOutOfStock = (product: FinishedProduct): boolean => {
+    const ingredients = productIngredients[product.id] || []
+    if (ingredients.length === 0) return true
+    
+    return ingredients.some(ing => {
+      const item = inventoryItems.find(i => i.id === ing.item_id)
+      if (!item) return true
+      const availableQty = getInventoryInIngredientUnit(item)
+      return availableQty < ing.qty
+    })
+  }
+
+  // Calculate product cost based on ingredients only (no OPEX per unit)
   const calculateProductCost = (product: FinishedProduct): number => {
     const ingredients = productIngredients[product.id] || []
     const ingredientCost = ingredients.reduce((total, ing) => {
       const item = inventoryItems.find(i => i.id === ing.item_id)
       return total + (item ? item.cost * ing.qty : 0)
     }, 0)
-    return ingredientCost + (product.opex_cost || 0)
+    return ingredientCost
   }
 
   // Cart calculations
@@ -166,7 +179,7 @@ export default function SalesPage() {
       setEditingCartItem(existingItem)
       setModalQuantity(existingItem.quantity.toString())
     } else {
-      setSelectedProduct(product)
+    setSelectedProduct(product)
       setModalQuantity('1')
     }
   }
@@ -316,7 +329,7 @@ export default function SalesPage() {
         }
       }
 
-      // Create sale records
+      // Create sale records (cost is ingredient cost only, no OPEX per unit)
       const saleRecords = cart.map(item => ({
         transaction_id: transactionId,
         transaction_number: transactionNumber,
@@ -331,7 +344,6 @@ export default function SalesPage() {
         customer_type: selectedCustomerType,
         dine_in_takeout: selectedDineInTakeout,
         customer_payment: paymentAmount,
-        opex_cost: item.product.opex_cost || 0,
       }))
       
       const { data: saleData, error: saleError } = await (supabase as any)
@@ -357,7 +369,7 @@ export default function SalesPage() {
         const newQty = Math.max(0, item.qty - deductionInStorageUnit)
         
         const { error: updateError } = await (supabase as any)
-          .from('products')
+        .from('products')
           .update({ qty: newQty })
           .eq('id', itemId)
         
@@ -539,7 +551,7 @@ export default function SalesPage() {
             }`}>
               ₱{changeAmount.toFixed(2)}
             </div>
-          </div>
+      </div>
 
           {/* Checkout Button */}
           <button
@@ -558,36 +570,51 @@ export default function SalesPage() {
         {availableProducts.length === 0 ? (
           <div className="card p-8 text-center">
             <p className="text-surface-400">No products available. Create products in the Inventory section.</p>
-          </div>
-        ) : (
+        </div>
+      ) : (
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
-            {availableProducts.map((product) => (
-              <button
-                key={product.id}
-                onClick={() => handleProductClick(product)}
-                className="card p-3 text-left hover:border-primary-500/50 transition-all group"
-              >
-                <div className="aspect-square bg-surface-800 rounded-lg mb-2 overflow-hidden">
-                  {product.image_url ? (
-                    <img
-                      src={getProductImageUrl(product.image_url) || ''}
-                      alt={product.name}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
-                      <svg className="w-6 h-6 text-surface-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                      </svg>
-                    </div>
-                  )}
-                </div>
-                <h4 className="font-medium text-white text-xs truncate">{product.name}</h4>
-                <p className="text-primary-500 font-bold text-sm">₱{product.selling_price.toFixed(2)}</p>
-              </button>
-            ))}
-          </div>
-        )}
+            {availableProducts.map((product) => {
+              const outOfStock = isProductOutOfStock(product)
+              return (
+            <button
+              key={product.id}
+                  onClick={() => !outOfStock && handleProductClick(product)}
+                  disabled={outOfStock}
+                  className={`card p-3 text-left transition-all group ${
+                    outOfStock 
+                      ? 'opacity-40 cursor-not-allowed grayscale' 
+                      : 'hover:border-primary-500/50'
+                  }`}
+                >
+                  <div className="aspect-square bg-surface-800 rounded-lg mb-2 overflow-hidden relative">
+                {product.image_url ? (
+                  <img
+                    src={getProductImageUrl(product.image_url) || ''}
+                    alt={product.name}
+                        className={`w-full h-full object-cover transition-transform ${!outOfStock ? 'group-hover:scale-105' : ''}`}
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                        <svg className="w-6 h-6 text-surface-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                  </div>
+                )}
+                    {outOfStock && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                        <span className="text-xs font-medium text-red-400 bg-red-500/20 px-2 py-1 rounded">
+                          Out of Stock
+                        </span>
+                  </div>
+                )}
+              </div>
+                  <h4 className={`font-medium text-xs truncate ${outOfStock ? 'text-surface-500' : 'text-white'}`}>{product.name}</h4>
+                  <p className={`font-bold text-sm ${outOfStock ? 'text-surface-600' : 'text-primary-500'}`}>₱{product.selling_price.toFixed(2)}</p>
+            </button>
+              )
+            })}
+        </div>
+      )}
       </div>
 
       {/* Product/Cart Item Modal */}
@@ -659,23 +686,23 @@ export default function SalesPage() {
             </div>
 
             {/* Action Buttons */}
-            <div className="flex gap-2">
+                <div className="flex gap-2">
               {editingCartItem && (
-                <button
+                  <button
                   onClick={handleRemoveFromCart}
                   className="flex-1 py-3 px-4 bg-red-500/20 hover:bg-red-500/30 text-red-400 font-semibold rounded-lg transition-colors"
                 >
                   Remove
-                </button>
+                  </button>
               )}
-              <button
+                  <button
                 onClick={handleAddToCart}
                 disabled={(parseInt(modalQuantity) || 0) <= 0}
                 className="flex-1 py-3 px-4 bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white font-semibold rounded-lg transition-all disabled:opacity-50"
               >
                 {editingCartItem ? 'Update Cart' : 'Add to Cart'}
-              </button>
-            </div>
+                  </button>
+                </div>
 
             {/* Delete Product Button (Owner only) */}
             {isOwner && !editingCartItem && (
@@ -706,7 +733,7 @@ export default function SalesPage() {
               <p className="text-red-400 text-sm">
                 ⚠️ This action cannot be undone.
               </p>
-            </div>
+              </div>
             <div className="flex gap-3">
               <button
                 onClick={() => {

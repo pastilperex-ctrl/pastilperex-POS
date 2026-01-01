@@ -11,14 +11,6 @@ interface ProductCreationItem {
   qty: number
 }
 
-interface OpexSettings {
-  target_monthly_sales: number
-}
-
-interface Opex {
-  monthly_cost: number
-}
-
 export default function InventoryPage() {
   const [items, setItems] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
@@ -34,13 +26,9 @@ export default function InventoryPage() {
   const [showProductSaveModal, setShowProductSaveModal] = useState(false)
   const [productName, setProductName] = useState('')
   const [productSellingPrice, setProductSellingPrice] = useState('')
-  const [productOpexCost, setProductOpexCost] = useState('')
   const [productImageFile, setProductImageFile] = useState<File | null>(null)
   const [productImagePreview, setProductImagePreview] = useState<string | null>(null)
   const productFileInputRef = useRef<HTMLInputElement>(null)
-
-  // OPEX data
-  const [opexPerUnit, setOpexPerUnit] = useState(0)
 
   // Form state for inventory items
   const [formData, setFormData] = useState({
@@ -69,28 +57,9 @@ export default function InventoryPage() {
     }
   }, [])
 
-  const fetchOpexData = useCallback(async () => {
-    try {
-      const [opexRes, settingsRes] = await Promise.all([
-        supabase.from('opex').select('monthly_cost'),
-        supabase.from('opex_settings').select('target_monthly_sales').limit(1).single(),
-      ])
-
-      const totalOpex = (opexRes.data || []).reduce((sum: number, item: Opex) => sum + item.monthly_cost, 0)
-      const targetSales = settingsRes.data?.target_monthly_sales || 100
-
-      setOpexPerUnit(targetSales > 0 ? totalOpex / targetSales : 0)
-      setProductOpexCost((targetSales > 0 ? totalOpex / targetSales : 0).toFixed(2))
-    } catch (error) {
-      console.error('Error fetching OPEX data:', error)
-      setOpexPerUnit(0)
-    }
-  }, [])
-
   useEffect(() => {
     fetchItems()
-    fetchOpexData()
-  }, [fetchItems, fetchOpexData])
+  }, [fetchItems])
 
   const resetForm = () => {
     setFormData({
@@ -202,7 +171,7 @@ export default function InventoryPage() {
         toast.error(`Upload failed: ${error.message}`)
         return null
       }
-
+      
       return fileName
     } catch (error: any) {
       console.error('Error uploading image:', error)
@@ -399,7 +368,6 @@ export default function InventoryPage() {
     }
     setProductName('')
     setProductSellingPrice('')
-    setProductOpexCost(opexPerUnit.toFixed(2))
     setProductImageFile(null)
     setProductImagePreview(null)
     setShowProductSaveModal(true)
@@ -442,8 +410,6 @@ export default function InventoryPage() {
         }
       }
 
-      const opexCost = parseFloat(productOpexCost) || 0
-
       // Create the finished product
       const { data: productData, error: productError } = await (supabase as any)
         .from('finished_products')
@@ -451,7 +417,6 @@ export default function InventoryPage() {
           name: productName.trim(),
           selling_price: sellingPrice,
           image_url: imagePath,
-          opex_cost: opexCost,
         })
         .select()
         .single()
@@ -496,8 +461,7 @@ export default function InventoryPage() {
 
   const perUnitCost = calculatePerUnitCost()
   const ingredientCost = calculateIngredientCost()
-  const totalProductCost = ingredientCost + (parseFloat(productOpexCost) || 0)
-  const grossProfit = (parseFloat(productSellingPrice) || 0) - totalProductCost
+  const grossProfit = (parseFloat(productSellingPrice) || 0) - ingredientCost
 
   if (loading) {
     return (
@@ -608,27 +572,18 @@ export default function InventoryPage() {
 
         {/* Cost Summary */}
         {productCreation.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-3 bg-surface-800/50 rounded-lg">
-            <div>
-              <p className="text-surface-500 text-xs">Ingredient Cost</p>
-              <p className="text-white font-mono">₱{ingredientCost.toFixed(2)}</p>
+          <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-yellow-400 text-sm font-medium">Ingredient Cost</p>
+                <p className="text-yellow-400 font-mono font-bold text-lg">₱{ingredientCost.toFixed(2)}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-surface-500 text-xs">Suggested Min Price (30% margin)</p>
+                <p className="text-primary-500 font-mono font-bold">₱{(ingredientCost * 1.3).toFixed(2)}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-surface-500 text-xs">OPEX/Unit</p>
-              <p className="text-yellow-400 font-mono">₱{opexPerUnit.toFixed(2)}</p>
-            </div>
-            <div>
-              <p className="text-surface-500 text-xs">Total Cost</p>
-              <p className="text-red-400 font-mono font-bold">
-                ₱{(ingredientCost + opexPerUnit).toFixed(2)}
-              </p>
-            </div>
-            <div>
-              <p className="text-surface-500 text-xs">Suggested Min Price</p>
-              <p className="text-primary-500 font-mono font-bold">
-                ₱{((ingredientCost + opexPerUnit) * 1.3).toFixed(2)}
-              </p>
-            </div>
+            <p className="text-yellow-400/60 text-xs mt-2">⚠️ This is a Pre-OPEX calculation</p>
           </div>
         )}
       </div>
@@ -637,24 +592,24 @@ export default function InventoryPage() {
       <div className="flex-1 overflow-y-auto">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-lg font-semibold text-white">Inventory Items</h3>
-          <button
-            onClick={openAddModal}
+        <button
+          onClick={openAddModal}
             className="px-4 py-2 bg-primary-500 hover:bg-primary-600 text-white font-medium rounded-lg transition-colors flex items-center gap-2 text-sm"
-          >
+        >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            Add Item
-          </button>
-        </div>
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+          </svg>
+          Add Item
+        </button>
+      </div>
 
-        {items.length === 0 ? (
+      {items.length === 0 ? (
           <div className="card p-8 text-center">
             <p className="text-surface-400">No inventory items. Add items to start creating products.</p>
-          </div>
-        ) : (
+        </div>
+      ) : (
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
-            {items.map((item) => (
+          {items.map((item) => (
               <button
                 key={item.id}
                 onClick={() => handleItemClick(item)}
@@ -679,14 +634,14 @@ export default function InventoryPage() {
                 </button>
 
                 <div className="aspect-square bg-surface-800 rounded-lg mb-2 overflow-hidden">
-                  {item.image_url ? (
-                    <img
-                      src={getProductImageUrl(item.image_url) || ''}
-                      alt={item.name}
+                {item.image_url ? (
+                  <img
+                    src={getProductImageUrl(item.image_url) || ''}
+                    alt={item.name}
                       className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex items-center justify-center">
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
                       <svg
                         className="w-6 h-6 text-surface-600"
                         fill="none"
@@ -699,7 +654,7 @@ export default function InventoryPage() {
                           strokeWidth={2}
                           d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
                         />
-                      </svg>
+                    </svg>
                     </div>
                   )}
                 </div>
@@ -710,9 +665,9 @@ export default function InventoryPage() {
                 </p>
               </button>
             ))}
-          </div>
-        )}
-      </div>
+                  </div>
+                )}
+              </div>
 
       {/* Item Selection Modal */}
       {selectedItem && (
@@ -742,7 +697,7 @@ export default function InventoryPage() {
                           d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
                         />
                       </svg>
-                    </div>
+                </div>
                   )}
                 </div>
                 <div>
@@ -765,7 +720,7 @@ export default function InventoryPage() {
                   />
                 </svg>
               </button>
-            </div>
+              </div>
 
             {/* Quantity Controls */}
             <div className="mb-4">
@@ -972,7 +927,7 @@ export default function InventoryPage() {
                 </label>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-surface-500">₱</span>
-                  <input
+                <input
                     type="text"
                     inputMode="decimal"
                     value={formData.totalCost}
@@ -1116,33 +1071,12 @@ export default function InventoryPage() {
               </div>
 
               {/* Cost Breakdown */}
-              <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span className="text-yellow-400">Ingredient Cost:</span>
-                  <span className="text-yellow-400 font-mono">₱{ingredientCost.toFixed(2)}</span>
+              <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-lg">
+                <div className="flex justify-between text-sm mb-2">
+                  <span className="text-yellow-400 font-medium">Ingredient Cost:</span>
+                  <span className="text-yellow-400 font-mono font-bold">₱{ingredientCost.toFixed(2)}</span>
                 </div>
-                <div className="flex justify-between text-sm items-center">
-                  <span className="text-yellow-400">OPEX Cost:</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-surface-500">₱</span>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      value={productOpexCost}
-                      onChange={(e) => {
-                        const val = e.target.value
-                        if (val === '' || /^\d*\.?\d*$/.test(val)) {
-                          setProductOpexCost(val)
-                        }
-                      }}
-                      className="w-20 px-2 py-1 bg-surface-800 border border-surface-700 rounded text-yellow-400 font-mono text-sm text-right"
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-between text-sm font-bold border-t border-yellow-500/20 pt-2">
-                  <span className="text-yellow-400">Total Cost:</span>
-                  <span className="text-yellow-400 font-mono">₱{totalProductCost.toFixed(2)}</span>
-                </div>
+                <p className="text-yellow-400/60 text-xs">⚠️ This is a Pre-OPEX calculation</p>
               </div>
 
               {/* Selling Price */}

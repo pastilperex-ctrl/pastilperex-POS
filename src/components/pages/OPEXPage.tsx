@@ -5,14 +5,8 @@ import { supabase } from '@/lib/supabase'
 import { Opex } from '@/types/database'
 import toast from 'react-hot-toast'
 
-interface OpexSettings {
-  id: string
-  target_monthly_sales: number
-}
-
 export default function OPEXPage() {
   const [opexItems, setOpexItems] = useState<Opex[]>([])
-  const [settings, setSettings] = useState<OpexSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
   const [editingItem, setEditingItem] = useState<Opex | null>(null)
@@ -24,24 +18,13 @@ export default function OPEXPage() {
     monthly_cost: '',
   })
 
-  // Target sales input
-  const [targetSales, setTargetSales] = useState('')
-
   const fetchData = useCallback(async () => {
     try {
-      const [opexRes, settingsRes] = await Promise.all([
-        supabase.from('opex').select('*').order('name'),
-        supabase.from('opex_settings').select('*').limit(1).single(),
-      ])
-
-      if (opexRes.data) setOpexItems(opexRes.data)
-      if (settingsRes.data) {
-        setSettings(settingsRes.data)
-        setTargetSales(settingsRes.data.target_monthly_sales.toString())
-      }
+      const { data, error } = await supabase.from('opex').select('*').order('name')
+      if (error) throw error
+      setOpexItems(data || [])
     } catch (error) {
       console.error('Error fetching OPEX data:', error)
-      // Tables might not exist yet
       setOpexItems([])
     } finally {
       setLoading(false)
@@ -52,10 +35,8 @@ export default function OPEXPage() {
     fetchData()
   }, [fetchData])
 
-  // Calculate totals
+  // Calculate total
   const totalMonthlyOpex = opexItems.reduce((sum, item) => sum + item.monthly_cost, 0)
-  const targetSalesNum = parseInt(targetSales) || 0
-  const opexPerUnit = targetSalesNum > 0 ? totalMonthlyOpex / targetSalesNum : 0
 
   const resetForm = () => {
     setFormData({ name: '', monthly_cost: '' })
@@ -149,37 +130,6 @@ export default function OPEXPage() {
     }
   }
 
-  const handleUpdateTargetSales = async () => {
-    const target = parseInt(targetSales) || 0
-    if (target <= 0) {
-      toast.error('Please enter a valid target')
-      return
-    }
-
-    try {
-      if (settings) {
-        const { error } = await (supabase as any)
-          .from('opex_settings')
-          .update({ target_monthly_sales: target })
-          .eq('id', settings.id)
-
-        if (error) throw error
-      } else {
-        const { error } = await (supabase as any)
-          .from('opex_settings')
-          .insert({ target_monthly_sales: target })
-
-        if (error) throw error
-      }
-
-      toast.success('Target updated!')
-      fetchData()
-    } catch (error) {
-      console.error('Error updating target:', error)
-      toast.error('Failed to update target')
-    }
-  }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -206,43 +156,22 @@ export default function OPEXPage() {
         </button>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-        <div className="card p-4">
-          <p className="text-surface-400 text-sm mb-1">Total Monthly OPEX</p>
-          <p className="text-2xl font-bold text-red-400 font-mono">₱{totalMonthlyOpex.toLocaleString(undefined, { minimumFractionDigits: 2 })}</p>
-        </div>
-        <div className="card p-4">
-          <p className="text-surface-400 text-sm mb-1">Target Monthly Sales</p>
-          <div className="flex items-center gap-2">
-            <input
-              type="number"
-              value={targetSales}
-              onChange={(e) => setTargetSales(e.target.value)}
-              className="w-24 px-3 py-1 bg-surface-800 border border-surface-700 rounded text-white font-mono text-lg"
-              min={1}
-            />
-            <span className="text-surface-400">units</span>
-            <button
-              onClick={handleUpdateTargetSales}
-              className="ml-auto px-3 py-1 bg-primary-500/20 hover:bg-primary-500/30 text-primary-400 rounded text-sm"
-            >
-              Save
-            </button>
-          </div>
-        </div>
-        <div className="card p-4 bg-primary-500/10 border-primary-500/20">
-          <p className="text-surface-400 text-sm mb-1">OPEX Cost per Unit</p>
-          <p className="text-2xl font-bold text-primary-500 font-mono">₱{opexPerUnit.toFixed(2)}</p>
-          <p className="text-xs text-surface-500 mt-1">Added to each product&apos;s cost</p>
-        </div>
+      {/* Summary Card */}
+      <div className="card p-6 mb-6 bg-red-500/10 border-red-500/20">
+        <p className="text-surface-400 text-sm mb-1">Total Monthly OPEX</p>
+        <p className="text-3xl font-bold text-red-400 font-mono">
+          ₱{totalMonthlyOpex.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+        </p>
+        <p className="text-surface-500 text-xs mt-2">
+          This is your total monthly operating expenses. Gross profit from sales will be used to cover this amount.
+        </p>
       </div>
 
       {/* Info */}
       <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg">
         <p className="text-blue-400 text-sm">
-          💡 <strong>How it works:</strong> Total Monthly OPEX ÷ Target Sales = OPEX per unit. 
-          This amount is automatically added to each product&apos;s cost calculation.
+          💡 <strong>How it works:</strong> Each sale&apos;s gross profit (revenue - ingredient cost) goes toward paying off 
+          the monthly OPEX. Once OPEX is fully covered, remaining profit becomes net profit.
         </p>
       </div>
 
@@ -384,4 +313,3 @@ export default function OPEXPage() {
     </div>
   )
 }
-

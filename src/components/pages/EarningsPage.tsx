@@ -46,6 +46,13 @@ interface OpexItem {
   monthly_cost: number
 }
 
+interface MonthlySale {
+  total: number
+  cost: number
+  qty: number
+  created_at: string
+}
+
 export default function EarningsPage() {
   const [sales, setSales] = useState<Sale[]>([])
   const [loading, setLoading] = useState(true)
@@ -55,7 +62,7 @@ export default function EarningsPage() {
   
   // OPEX data
   const [totalMonthlyOpex, setTotalMonthlyOpex] = useState(0)
-  const [monthlyRevenue, setMonthlyRevenue] = useState(0)
+  const [monthlyGrossMargin, setMonthlyGrossMargin] = useState(0)
   const [breakEvenDate, setBreakEvenDate] = useState<Date | null>(null)
 
   const fetchOpexData = useCallback(async () => {
@@ -76,30 +83,32 @@ export default function EarningsPage() {
 
       const { data } = await (supabase as any)
         .from('sales')
-        .select('total, created_at')
+        .select('total, cost, qty, created_at')
         .eq('cancelled', false)
         .gte('created_at', monthStart.toISOString())
         .lte('created_at', monthEnd.toISOString())
         .order('created_at', { ascending: true })
 
-      const salesData = data || []
-      const totalRevenue = salesData.reduce((sum: number, s: any) => sum + s.total, 0)
-      setMonthlyRevenue(totalRevenue)
-
-      // Find break-even date
-      let runningTotal = 0
+      const salesData: MonthlySale[] = data || []
+      
+      // Calculate gross margin (revenue - item expenses) for each sale
+      let runningGrossMargin = 0
       let foundBreakEven = false
+      let breakEvenTimestamp: Date | null = null
+
       for (const sale of salesData) {
-        runningTotal += sale.total
-        if (runningTotal >= totalMonthlyOpex && !foundBreakEven) {
-          setBreakEvenDate(new Date(sale.created_at))
+        const saleGrossMargin = sale.total - (sale.cost * sale.qty)
+        runningGrossMargin += saleGrossMargin
+        
+        // Check if break-even reached at this sale
+        if (runningGrossMargin >= totalMonthlyOpex && !foundBreakEven && totalMonthlyOpex > 0) {
+          breakEvenTimestamp = new Date(sale.created_at)
           foundBreakEven = true
-          break
         }
       }
-      if (!foundBreakEven) {
-        setBreakEvenDate(null)
-      }
+
+      setMonthlyGrossMargin(runningGrossMargin)
+      setBreakEvenDate(breakEvenTimestamp)
     } catch (error) {
       console.error('Error fetching monthly sales:', error)
     }
@@ -154,10 +163,8 @@ export default function EarningsPage() {
   }, [fetchOpexData])
 
   useEffect(() => {
-    if (totalMonthlyOpex > 0) {
-      fetchMonthlySales()
-    }
-  }, [totalMonthlyOpex, fetchMonthlySales])
+    fetchMonthlySales()
+  }, [fetchMonthlySales])
 
   useEffect(() => {
     fetchSales()
@@ -176,21 +183,18 @@ export default function EarningsPage() {
     }
   }, [fetchSales, fetchMonthlySales, viewMode])
 
-  // Calculate totals
+  // Calculate totals for displayed data
   const totalRevenue = sales.reduce((sum, s) => sum + s.total, 0)
-  const totalItemExpenses = sales.reduce((sum, s) => sum + (s.cost * s.qty) - ((s as any).opex_cost || 0) * s.qty, 0)
-  const totalOpexFromSales = sales.reduce((sum, s) => sum + ((s as any).opex_cost || 0) * s.qty, 0)
+  const totalItemExpenses = sales.reduce((sum, s) => sum + (s.cost * s.qty), 0)
+  const grossMargin = totalRevenue - totalItemExpenses
   
-  // Break-even calculations for current month
-  const isBreakEvenReached = monthlyRevenue >= totalMonthlyOpex
-  const amountUntilBreakEven = Math.max(0, totalMonthlyOpex - monthlyRevenue)
+  // Remaining OPEX calculation (for current month)
+  const remainingOpex = Math.max(0, totalMonthlyOpex - monthlyGrossMargin)
+  const isBreakEvenReached = remainingOpex === 0 && totalMonthlyOpex > 0
+  const opexPaidThisMonth = Math.min(monthlyGrossMargin, totalMonthlyOpex)
   
-  // Adjusted profit calculation
-  // Before break-even: Profit = Revenue - Item Expenses - OPEX (OPEX is still an expense)
-  // After break-even: Profit = Revenue - Item Expenses (OPEX is covered, no longer deducted)
-  const totalProfit = isBreakEvenReached 
-    ? totalRevenue - totalItemExpenses 
-    : totalRevenue - totalItemExpenses - totalOpexFromSales
+  // Net Profit: 0 until OPEX is covered, then any excess gross margin
+  const netProfit = isBreakEvenReached ? monthlyGrossMargin - totalMonthlyOpex : 0
 
   // Customer type data for pie chart
   const customerTypeData = sales.reduce((acc, sale) => {
@@ -211,7 +215,7 @@ export default function EarningsPage() {
     return acc
   }, {} as Record<string, number>)
 
-  // Line chart data for date range
+  // Line chart data for date range - shows Remaining OPEX and Profit
   const getLineChartData = () => {
     if (viewMode !== 'range') return null
 
@@ -220,43 +224,69 @@ export default function EarningsPage() {
       end: parseISO(endDate),
     })
 
-    const revenueByDay = days.map((day) => {
-      const dayStr = format(day, 'yyyy-MM-dd')
-      return sales
-        .filter((s: any) => format(new Date(s.earnings_datetime || s.created_at), 'yyyy-MM-dd') === dayStr)
-        .reduce((sum, s) => sum + s.total, 0)
-    })
+    // Track running gross margin to calculate remaining OPEX per day
+    let runningGrossMargin = 0
+    
+    const remainingOpexByDay: number[] = []
+    const profitByDay: number[] = []
+    const itemExpensesByDay: number[] = []
 
-    const profitByDay = days.map((day) => {
+    days.forEach((day) => {
       const dayStr = format(day, 'yyyy-MM-dd')
-      const daySales = sales.filter((s: any) => format(new Date(s.earnings_datetime || s.created_at), 'yyyy-MM-dd') === dayStr)
-      const revenue = daySales.reduce((sum, s) => sum + s.total, 0)
-      const cost = daySales.reduce((sum, s) => sum + (s.cost * s.qty), 0)
-      return revenue - cost
+      const daySales = sales.filter((s: any) => 
+        format(new Date(s.earnings_datetime || s.created_at), 'yyyy-MM-dd') === dayStr
+      )
+      
+      const dayRevenue = daySales.reduce((sum, s) => sum + s.total, 0)
+      const dayItemExpenses = daySales.reduce((sum, s) => sum + (s.cost * s.qty), 0)
+      const dayGrossMargin = dayRevenue - dayItemExpenses
+      
+      runningGrossMargin += dayGrossMargin
+      
+      const dayRemainingOpex = Math.max(0, totalMonthlyOpex - runningGrossMargin)
+      const dayNetProfit = runningGrossMargin > totalMonthlyOpex ? runningGrossMargin - totalMonthlyOpex : 0
+      
+      remainingOpexByDay.push(dayRemainingOpex)
+      profitByDay.push(dayNetProfit)
+      itemExpensesByDay.push(dayItemExpenses)
     })
 
     return {
       labels: days.map((d) => format(d, 'MMM d')),
       datasets: [
         {
-          label: 'Revenue',
-          data: revenueByDay,
-          borderColor: '#10b981',
-          backgroundColor: 'rgba(16, 185, 129, 0.1)',
+          label: 'Remaining OPEX',
+          data: remainingOpexByDay,
+          borderColor: '#ef4444',
+          backgroundColor: 'rgba(239, 68, 68, 0.1)',
           fill: true,
           tension: 0.4,
         },
         {
-          label: 'Profit',
+          label: 'Net Profit',
           data: profitByDay,
           borderColor: '#22c55e',
-          backgroundColor: 'rgba(34, 197, 94, 0.1)',
+          backgroundColor: 'rgba(34, 197, 94, 0.3)',
           fill: true,
           tension: 0.4,
+        },
+        {
+          label: 'Item Expenses',
+          data: itemExpensesByDay,
+          borderColor: '#f59e0b',
+          backgroundColor: 'rgba(245, 158, 11, 0.1)',
+          fill: false,
+          tension: 0.4,
+          borderDash: [5, 5],
         },
       ],
     }
   }
+
+  // Calculate range totals
+  const rangeTotalItemExpenses = sales.reduce((sum, s) => sum + (s.cost * s.qty), 0)
+  const rangeGrossMargin = totalRevenue - rangeTotalItemExpenses
+  const rangeOpexPaid = Math.min(rangeGrossMargin, totalMonthlyOpex)
 
   const pieOptions = {
     responsive: true,
@@ -368,7 +398,7 @@ export default function EarningsPage() {
         </div>
       </div>
 
-      {/* OPEX Break-Even Card */}
+      {/* Break-Even Status Card */}
       <div className={`mb-6 p-4 rounded-lg border ${
         isBreakEvenReached 
           ? 'bg-green-500/10 border-green-500/20' 
@@ -377,41 +407,27 @@ export default function EarningsPage() {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
             <h3 className={`font-semibold ${isBreakEvenReached ? 'text-green-400' : 'text-yellow-400'}`}>
-              {isBreakEvenReached ? '✓ Break-Even Reached!' : 'Monthly OPEX Tracking'}
+              {isBreakEvenReached ? '✓ Break-Even Reached!' : 'Monthly OPEX Status'}
             </h3>
             {isBreakEvenReached ? (
               <p className="text-green-400/80 text-sm mt-1">
                 Break-even reached on {breakEvenDate ? format(breakEvenDate, 'MMM d, yyyy h:mm a') : 'this month'}. 
-                OPEX is now covered, additional revenue contributes to profit.
+                Gross profit now contributes to net profit.
               </p>
             ) : (
               <p className="text-yellow-400/80 text-sm mt-1">
-                ₱{amountUntilBreakEven.toLocaleString(undefined, { minimumFractionDigits: 2 })} more needed to cover monthly OPEX
+                ₱{remainingOpex.toLocaleString(undefined, { minimumFractionDigits: 2 })} remaining to cover monthly OPEX
               </p>
             )}
           </div>
           <div className="text-right">
-            <p className="text-surface-400 text-xs">Monthly OPEX</p>
+            <p className="text-surface-400 text-xs">{isBreakEvenReached ? 'OPEX Covered' : 'Remaining OPEX'}</p>
             <p className={`text-xl font-bold font-mono ${isBreakEvenReached ? 'text-green-400' : 'text-yellow-400'}`}>
-              ₱{totalMonthlyOpex.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              {isBreakEvenReached ? '₱0.00' : `₱${remainingOpex.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
             </p>
             <p className="text-surface-500 text-xs mt-1">
-              Revenue: ₱{monthlyRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+              Monthly OPEX: ₱{totalMonthlyOpex.toLocaleString(undefined, { minimumFractionDigits: 2 })}
             </p>
-          </div>
-        </div>
-        {/* Progress bar */}
-        <div className="mt-3">
-          <div className="w-full h-2 bg-surface-800 rounded-full overflow-hidden">
-            <div 
-              className={`h-full rounded-full transition-all ${isBreakEvenReached ? 'bg-green-500' : 'bg-yellow-500'}`}
-              style={{ width: `${Math.min(100, (monthlyRevenue / totalMonthlyOpex) * 100)}%` }}
-            />
-          </div>
-          <div className="flex justify-between mt-1 text-xs text-surface-500">
-            <span>₱0</span>
-            <span>{Math.min(100, (monthlyRevenue / totalMonthlyOpex) * 100).toFixed(1)}%</span>
-            <span>₱{totalMonthlyOpex.toLocaleString()}</span>
           </div>
         </div>
       </div>
@@ -463,8 +479,10 @@ export default function EarningsPage() {
               </svg>
             </div>
             <div>
-              <p className="text-surface-400 text-sm">Total OPEX</p>
-              <p className="text-2xl font-bold text-yellow-400 font-mono">₱{totalMonthlyOpex.toFixed(2)}</p>
+              <p className="text-surface-400 text-sm">Remaining OPEX</p>
+              <p className={`text-2xl font-bold font-mono ${isBreakEvenReached ? 'text-green-400' : 'text-yellow-400'}`}>
+                ₱{remainingOpex.toFixed(2)}
+              </p>
               {isBreakEvenReached && (
                 <p className="text-xs text-green-400">OPEX covered ✓</p>
               )}
@@ -474,20 +492,41 @@ export default function EarningsPage() {
 
         <div className="card p-6">
           <div className="flex items-center gap-3 mb-2">
-            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${totalProfit >= 0 ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
-              <svg className={`w-5 h-5 ${totalProfit >= 0 ? 'text-green-500' : 'text-red-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={totalProfit >= 0 ? "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" : "M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"} />
+            <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${netProfit > 0 ? 'bg-green-500/10' : 'bg-surface-700'}`}>
+              <svg className={`w-5 h-5 ${netProfit > 0 ? 'text-green-500' : 'text-surface-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={netProfit > 0 ? "M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" : "M20 12H4"} />
               </svg>
             </div>
             <div>
               <p className="text-surface-400 text-sm">Net Profit</p>
-              <p className={`text-2xl font-bold font-mono ${totalProfit >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                ₱{totalProfit.toFixed(2)}
+              <p className={`text-2xl font-bold font-mono ${netProfit > 0 ? 'text-green-500' : 'text-surface-500'}`}>
+                ₱{netProfit.toFixed(2)}
               </p>
+              {!isBreakEvenReached && netProfit === 0 && (
+                <p className="text-xs text-surface-500">Cover OPEX first</p>
+              )}
             </div>
           </div>
         </div>
       </div>
+
+      {/* Range View Totals */}
+      {viewMode === 'range' && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+          <div className="card p-4 bg-yellow-500/5 border-yellow-500/20">
+            <p className="text-surface-400 text-sm">Total Item Expenses (Range)</p>
+            <p className="text-xl font-bold text-yellow-400 font-mono">₱{rangeTotalItemExpenses.toFixed(2)}</p>
+          </div>
+          <div className="card p-4 bg-blue-500/5 border-blue-500/20">
+            <p className="text-surface-400 text-sm">Gross Margin (Range)</p>
+            <p className="text-xl font-bold text-blue-400 font-mono">₱{rangeGrossMargin.toFixed(2)}</p>
+          </div>
+          <div className="card p-4 bg-red-500/5 border-red-500/20">
+            <p className="text-surface-400 text-sm">OPEX Paid (Range)</p>
+            <p className="text-xl font-bold text-red-400 font-mono">₱{rangeOpexPaid.toFixed(2)}</p>
+          </div>
+        </div>
+      )}
 
       {sales.length === 0 ? (
         <div className="card p-12 text-center">
@@ -502,7 +541,7 @@ export default function EarningsPage() {
           {/* Line Chart for Range View */}
           {viewMode === 'range' && getLineChartData() && (
             <div className="card p-6 mb-6">
-              <h3 className="text-lg font-semibold text-white mb-4">Revenue & Profit Trend</h3>
+              <h3 className="text-lg font-semibold text-white mb-4">OPEX & Profit Trend</h3>
               <div className="h-80">
                 <Line data={getLineChartData()!} options={lineOptions} />
               </div>
@@ -590,3 +629,4 @@ export default function EarningsPage() {
     </div>
   )
 }
+
