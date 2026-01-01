@@ -161,7 +161,7 @@ export default function ReportsPage() {
       ]
       
       const csvRows = selectedTxs.map((tx) => {
-        const itemsList = tx.items.map(i => `${i.product_name} (${i.qty}pcs)`).join(', ')
+        const itemsList = tx.items.map(i => `${i.product_name} (${i.qty}pcs)`).join('; ')
         
         return [
           tx.transaction_number,
@@ -169,8 +169,8 @@ export default function ReportsPage() {
           tx.payment_method,
           tx.customer_type,
           tx.dine_in_takeout === 'dine_in' ? 'Dine In' : 'Takeout',
-          format(new Date(tx.created_at), 'MMM d, h:mm a'),
-          format(new Date(tx.earnings_datetime), 'MMM d, h:mm a'),
+          format(new Date(tx.created_at), 'MMM d yyyy h:mm a'),
+          format(new Date(tx.earnings_datetime), 'MMM d yyyy h:mm a'),
           tx.total.toFixed(2),
         ]
       })
@@ -459,7 +459,7 @@ export default function ReportsPage() {
                         )}
                       </td>
                       <td className="p-4 text-surface-500 text-sm font-mono">
-                        {format(new Date(tx.created_at), 'MMM d, h:mm a')}
+                        {format(new Date(tx.created_at), 'MMM d yyyy h:mm a')}
                       </td>
                       <td className="p-4">
                         {editingField === `${tx.id}-earnings` ? (
@@ -476,7 +476,7 @@ export default function ReportsPage() {
                             onClick={() => setEditingField(`${tx.id}-earnings`)}
                             className="text-primary-400 hover:text-primary-300 text-sm font-mono"
                           >
-                            {format(new Date(tx.earnings_datetime), 'MMM d, h:mm a')}
+                            {format(new Date(tx.earnings_datetime), 'MMM d yyyy h:mm a')}
                           </button>
                         )}
                       </td>
