@@ -178,19 +178,19 @@ export default function EarningsPage() {
 
   // Calculate totals
   const totalRevenue = sales.reduce((sum, s) => sum + s.total, 0)
-  const totalIngredientCost = sales.reduce((sum, s) => sum + (s.cost * s.qty), 0)
-  const totalOpexCost = sales.reduce((sum, s) => sum + ((s as any).opex_cost || 0) * s.qty, 0)
-  const totalCost = totalIngredientCost + totalOpexCost
+  const totalItemExpenses = sales.reduce((sum, s) => sum + (s.cost * s.qty) - ((s as any).opex_cost || 0) * s.qty, 0)
+  const totalOpexFromSales = sales.reduce((sum, s) => sum + ((s as any).opex_cost || 0) * s.qty, 0)
   
   // Break-even calculations for current month
   const isBreakEvenReached = monthlyRevenue >= totalMonthlyOpex
   const amountUntilBreakEven = Math.max(0, totalMonthlyOpex - monthlyRevenue)
   
   // Adjusted profit calculation
-  // Before break-even: show OPEX as expense
-  // After break-even: OPEX is "covered", profit is higher
-  const effectiveExpenses = isBreakEvenReached ? totalIngredientCost : totalCost
-  const totalProfit = totalRevenue - effectiveExpenses
+  // Before break-even: Profit = Revenue - Item Expenses - OPEX (OPEX is still an expense)
+  // After break-even: Profit = Revenue - Item Expenses (OPEX is covered, no longer deducted)
+  const totalProfit = isBreakEvenReached 
+    ? totalRevenue - totalItemExpenses 
+    : totalRevenue - totalItemExpenses - totalOpexFromSales
 
   // Customer type data for pie chart
   const customerTypeData = sales.reduce((acc, sale) => {
@@ -449,11 +449,8 @@ export default function EarningsPage() {
               </svg>
             </div>
             <div>
-              <p className="text-surface-400 text-sm">Total Expenses</p>
-              <p className="text-2xl font-bold text-white font-mono">₱{effectiveExpenses.toFixed(2)}</p>
-              {isBreakEvenReached && totalOpexCost > 0 && (
-                <p className="text-xs text-green-400">OPEX covered ✓</p>
-              )}
+              <p className="text-surface-400 text-sm">Item Expenses</p>
+              <p className="text-2xl font-bold text-white font-mono">₱{totalItemExpenses.toFixed(2)}</p>
             </div>
           </div>
         </div>
@@ -467,7 +464,10 @@ export default function EarningsPage() {
             </div>
             <div>
               <p className="text-surface-400 text-sm">Total OPEX</p>
-              <p className="text-2xl font-bold text-yellow-400 font-mono">₱{totalOpexCost.toFixed(2)}</p>
+              <p className="text-2xl font-bold text-yellow-400 font-mono">₱{totalMonthlyOpex.toFixed(2)}</p>
+              {isBreakEvenReached && (
+                <p className="text-xs text-green-400">OPEX covered ✓</p>
+              )}
             </div>
           </div>
         </div>

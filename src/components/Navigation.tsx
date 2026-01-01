@@ -69,7 +69,7 @@ const navItems: { id: NavPage; label: string; icon: JSX.Element }[] = [
 ]
 
 export default function Navigation({ activePage, setActivePage, isCashier }: NavigationProps) {
-  const { user, logout } = useAuth()
+  const { user } = useAuth()
 
   const visibleItems = isCashier ? navItems.filter((item) => item.id === 'sales') : navItems
 
@@ -110,7 +110,7 @@ export default function Navigation({ activePage, setActivePage, isCashier }: Nav
           ))}
         </nav>
 
-        {/* User Info & Logout */}
+        {/* User Info */}
         <div className="p-4 border-t border-surface-800">
           <div className="flex items-center gap-3 px-4 py-3">
             <div className="w-8 h-8 rounded-full bg-surface-700 flex items-center justify-center">
@@ -123,15 +123,6 @@ export default function Navigation({ activePage, setActivePage, isCashier }: Nav
               <p className="text-xs text-surface-500 capitalize">{user?.role}</p>
             </div>
           </div>
-          <button
-            onClick={logout}
-            className="w-full mt-2 flex items-center justify-center gap-2 px-4 py-2 text-surface-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-            </svg>
-            <span className="text-sm">Logout</span>
-          </button>
         </div>
       </aside>
 
@@ -152,15 +143,6 @@ export default function Navigation({ activePage, setActivePage, isCashier }: Nav
               <span className="text-xs font-medium">{item.label}</span>
             </button>
           ))}
-          <button
-            onClick={logout}
-            className="flex flex-col items-center gap-1 px-3 py-2 rounded-lg text-surface-400"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-            </svg>
-            <span className="text-xs font-medium">Exit</span>
-          </button>
         </div>
       </nav>
     </>

@@ -287,23 +287,35 @@ export default function InventoryPage() {
     }
   }
 
-  const handleDelete = async (item: Product) => {
-    if (!confirm(`Delete "${item.name}"?`)) return
+  // Delete confirmation state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deletingItem, setDeletingItem] = useState<Product | null>(null)
+
+  const openDeleteConfirm = (item: Product) => {
+    setDeletingItem(item)
+    setShowDeleteConfirm(true)
+  }
+
+  const handleDelete = async () => {
+    if (!deletingItem) return
 
     try {
-      if (item.image_url) {
+      if (deletingItem.image_url) {
         await (supabase as any).storage
           .from(PRODUCT_IMAGES_BUCKET)
-          .remove([item.image_url])
+          .remove([deletingItem.image_url])
       }
 
       const { error } = await (supabase as any)
         .from('products')
         .delete()
-        .eq('id', item.id)
+        .eq('id', deletingItem.id)
 
       if (error) throw error
       toast.success('Item deleted')
+      setShowDeleteConfirm(false)
+      setDeletingItem(null)
+      closeModal()
       fetchItems()
     } catch (error) {
       console.error('Error deleting item:', error)
@@ -1001,10 +1013,7 @@ export default function InventoryPage() {
               {editingItem && (
                 <button
                   type="button"
-                  onClick={() => {
-                    handleDelete(editingItem)
-                    closeModal()
-                  }}
+                  onClick={() => openDeleteConfirm(editingItem)}
                   className="w-full py-2 text-red-400 hover:text-red-300 text-sm"
                 >
                   Delete Item
@@ -1178,6 +1187,41 @@ export default function InventoryPage() {
                 className="w-full py-3 px-4 bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white font-semibold rounded-lg transition-all disabled:opacity-50"
               >
                 {isSubmitting ? 'Saving...' : 'Create Product'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && deletingItem && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="card p-6 max-w-sm w-full">
+            <h3 className="text-lg font-semibold text-white mb-2">Delete Item?</h3>
+            <p className="text-surface-400 text-sm mb-4">
+              Are you sure you want to delete <strong className="text-white">{deletingItem.name}</strong>? 
+              This will remove the item from inventory.
+            </p>
+            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg mb-4">
+              <p className="text-red-400 text-sm">
+                ⚠️ This action cannot be undone.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowDeleteConfirm(false)
+                  setDeletingItem(null)
+                }}
+                className="flex-1 px-4 py-2 text-surface-400 hover:text-white hover:bg-surface-800 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                className="flex-1 px-4 py-2 bg-red-500 hover:bg-red-600 text-white font-medium rounded-lg transition-colors"
+              >
+                Delete
               </button>
             </div>
           </div>

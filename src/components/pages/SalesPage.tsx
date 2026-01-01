@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { supabase, getProductImageUrl } from '@/lib/supabase'
+import { supabase, getProductImageUrl, PRODUCT_IMAGES_BUCKET } from '@/lib/supabase'
 import { PaymentMethod, CustomerType } from '@/types/database'
 import { useNotifications } from '@/contexts/NotificationContext'
+import { useAuth } from '@/contexts/AuthContext'
 import { format } from 'date-fns'
 import toast from 'react-hot-toast'
 
@@ -38,6 +39,7 @@ interface CartItem {
 }
 
 export default function SalesPage() {
+  const { user } = useAuth()
   const { addRecentSale } = useNotifications()
   const [products, setProducts] = useState<FinishedProduct[]>([])
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([])
@@ -58,6 +60,12 @@ export default function SalesPage() {
   const [selectedProduct, setSelectedProduct] = useState<FinishedProduct | null>(null)
   const [editingCartItem, setEditingCartItem] = useState<CartItem | null>(null)
   const [modalQuantity, setModalQuantity] = useState<string>('1')
+
+  // Delete confirmation modal
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deletingProduct, setDeletingProduct] = useState<FinishedProduct | null>(null)
+
+  const isOwner = user?.role === 'owner'
 
   const fetchData = useCallback(async () => {
     try {
@@ -244,6 +252,49 @@ export default function SalesPage() {
     setSelectedCustomerType('')
     setSelectedDineInTakeout(null)
     setCustomerPayment('')
+  }
+
+  // Delete product (owner only)
+  const handleDeleteProduct = async () => {
+    if (!deletingProduct) return
+
+    try {
+      // Delete product image if exists
+      if (deletingProduct.image_url) {
+        await (supabase as any).storage
+          .from(PRODUCT_IMAGES_BUCKET)
+          .remove([deletingProduct.image_url])
+      }
+
+      // Delete ingredients first
+      await (supabase as any)
+        .from('product_ingredients')
+        .delete()
+        .eq('product_id', deletingProduct.id)
+
+      // Delete the product
+      const { error } = await (supabase as any)
+        .from('finished_products')
+        .delete()
+        .eq('id', deletingProduct.id)
+
+      if (error) throw error
+
+      toast.success('Product deleted')
+      setShowDeleteConfirm(false)
+      setDeletingProduct(null)
+      closeModal()
+      fetchData()
+    } catch (error) {
+      console.error('Error deleting product:', error)
+      toast.error('Failed to delete product')
+    }
+  }
+
+  // Open delete confirmation
+  const openDeleteConfirm = (product: FinishedProduct) => {
+    setDeletingProduct(product)
+    setShowDeleteConfirm(true)
   }
 
   // Handle checkout
@@ -540,7 +591,7 @@ export default function SalesPage() {
       </div>
 
       {/* Product/Cart Item Modal */}
-      {currentProduct && (
+      {currentProduct && !showDeleteConfirm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card p-6 max-w-sm w-full">
             {/* Header */}
@@ -623,6 +674,54 @@ export default function SalesPage() {
                 className="flex-1 py-3 px-4 bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white font-semibold rounded-lg transition-all disabled:opacity-50"
               >
                 {editingCartItem ? 'Update Cart' : 'Add to Cart'}
+              </button>
+            </div>
+
+            {/* Delete Product Button (Owner only) */}
+            {isOwner && !editingCartItem && (
+              <button
+                onClick={() => openDeleteConfirm(currentProduct)}
+                className="w-full mt-3 py-2 text-red-400 hover:text-red-300 text-sm flex items-center justify-center gap-2"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+                Delete Product
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && deletingProduct && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="card p-6 max-w-sm w-full">
+            <h3 className="text-lg font-semibold text-white mb-2">Delete Product?</h3>
+            <p className="text-surface-400 text-sm mb-4">
+              Are you sure you want to delete <strong className="text-white">{deletingProduct.name}</strong>? 
+              This will remove the product and all its ingredients from the system.
+            </p>
+            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg mb-4">
+              <p className="text-red-400 text-sm">
+                ⚠️ This action cannot be undone.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowDeleteConfirm(false)
+                  setDeletingProduct(null)
+                }}
+                className="flex-1 px-4 py-2 text-surface-400 hover:text-white hover:bg-surface-800 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteProduct}
+                className="flex-1 px-4 py-2 bg-red-500 hover:bg-red-600 text-white font-medium rounded-lg transition-colors"
+              >
+                Delete
               </button>
             </div>
           </div>

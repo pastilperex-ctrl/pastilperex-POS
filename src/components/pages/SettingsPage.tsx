@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { PaymentMethod, CustomerType } from '@/types/database'
+import { useAuth } from '@/contexts/AuthContext'
 import toast from 'react-hot-toast'
 
 const COLOR_OPTIONS = [
@@ -26,6 +27,7 @@ const COLOR_OPTIONS = [
 ]
 
 export default function SettingsPage() {
+  const { user, logout } = useAuth()
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([])
   const [customerTypes, setCustomerTypes] = useState<CustomerType[]>([])
   const [loading, setLoading] = useState(true)
@@ -313,6 +315,33 @@ export default function SettingsPage() {
               />
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* Account Section */}
+      <div className="card p-6 mt-6">
+        <h3 className="text-lg font-semibold text-white mb-4">Account</h3>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-surface-700 flex items-center justify-center">
+              <span className="text-lg font-medium text-white">
+                {user?.username.charAt(0).toUpperCase()}
+              </span>
+            </div>
+            <div>
+              <p className="text-white font-medium">{user?.username}</p>
+              <p className="text-surface-400 text-sm capitalize">{user?.role}</p>
+            </div>
+          </div>
+          <button
+            onClick={logout}
+            className="flex items-center gap-2 px-4 py-2 text-red-400 hover:text-white hover:bg-red-500 rounded-lg transition-colors border border-red-500/30"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+            </svg>
+            <span className="font-medium">Logout</span>
+          </button>
         </div>
       </div>
     </div>
