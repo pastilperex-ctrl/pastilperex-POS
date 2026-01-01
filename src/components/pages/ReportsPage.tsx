@@ -8,10 +8,12 @@ import toast from 'react-hot-toast'
 
 interface SaleWithEarnings extends Omit<Sale, 'earnings_datetime'> {
   earnings_datetime: string | null
+  transaction_number: string | null
 }
 
 interface Transaction {
   id: string
+  transaction_number: string
   items: SaleWithEarnings[]
   total: number
   payment_method: string
@@ -60,7 +62,8 @@ export default function ReportsPage() {
       const normalizedSales: SaleWithEarnings[] = (data || []).map((sale: any) => ({
         ...sale,
         earnings_datetime: sale.earnings_datetime || sale.store_sale_datetime || sale.created_at,
-        transaction_id: sale.transaction_id || sale.id
+        transaction_id: sale.transaction_id || sale.id,
+        transaction_number: sale.transaction_number || null
       }))
       
       setSales(normalizedSales)
@@ -71,6 +74,7 @@ export default function ReportsPage() {
         if (!acc[txId]) {
           acc[txId] = {
             id: txId,
+            transaction_number: sale.transaction_number || txId.substring(0, 8),
             items: [],
             total: 0,
             payment_method: sale.payment_method,
@@ -138,47 +142,36 @@ export default function ReportsPage() {
     if (selectedTransactions.size === 0) return
 
     try {
+      // Get selected transactions
+      const selectedTxs = transactions.filter((t) => selectedTransactions.has(t.id))
+      
       // Get all sale IDs for selected transactions
       const salesToArchive = sales.filter((s) => selectedTransactions.has(s.transaction_id || s.id))
 
-      // Generate CSV
+      // Generate CSV with exactly what's shown in the report
       const csvHeaders = [
         'Transaction #',
         'Items',
-        'Payment Method',
-        'Customer Type',
-        'Order Type',
-        'System Date & Time',
-        'Earnings Date & Time',
-        'Customer Payment',
+        'Payment',
+        'Customer',
+        'Order',
+        'Timestamp',
+        'Report Date',
         'Total'
       ]
       
-      // Group by transaction for CSV
-      const txGroups = salesToArchive.reduce((acc, sale) => {
-        const txId = sale.transaction_id || sale.id
-        if (!acc[txId]) {
-          acc[txId] = []
-        }
-        acc[txId].push(sale)
-        return acc
-      }, {} as Record<string, SaleWithEarnings[]>)
-
-      const csvRows = Object.entries(txGroups).map(([txId, items]) => {
-        const firstItem = items[0]
-        const itemsList = items.map(i => `${i.product_name} (${i.qty}pcs)`).join(', ')
-        const total = items.reduce((sum, i) => sum + i.total, 0)
+      const csvRows = selectedTxs.map((tx) => {
+        const itemsList = tx.items.map(i => `${i.product_name} (${i.qty}pcs)`).join(', ')
         
         return [
-          txId,
+          tx.transaction_number,
           `"${itemsList}"`,
-          firstItem.payment_method,
-          firstItem.customer_type,
-          firstItem.dine_in_takeout === 'dine_in' ? 'Dine In' : 'Takeout',
-          format(new Date(firstItem.created_at), 'yyyy-MM-dd HH:mm:ss'),
-          format(new Date(firstItem.earnings_datetime || firstItem.created_at), 'yyyy-MM-dd HH:mm:ss'),
-          firstItem.customer_payment?.toFixed(2) || '0.00',
-          total.toFixed(2),
+          tx.payment_method,
+          tx.customer_type,
+          tx.dine_in_takeout === 'dine_in' ? 'Dine In' : 'Takeout',
+          format(new Date(tx.created_at), 'MMM d, h:mm a'),
+          format(new Date(tx.earnings_datetime), 'MMM d, h:mm a'),
+          tx.total.toFixed(2),
         ]
       })
 
@@ -267,10 +260,10 @@ export default function ReportsPage() {
         t.id === txId ? { ...t, earnings_datetime: isoDateTime } : t
       ))
       
-      toast.success('Earnings DateTime updated')
+      toast.success('Report Date updated')
       setEditingField(null)
     } catch (error) {
-      console.error('Error updating earnings datetime:', error)
+      console.error('Error updating report date:', error)
       toast.error('Failed to update')
     }
   }
@@ -328,8 +321,8 @@ export default function ReportsPage() {
       {/* Info */}
       <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
         <p className="text-blue-400 text-sm">
-          💡 <strong>System Date & Time</strong> is immutable. 
-          <strong> Earnings Date & Time</strong> can be edited and is used for earnings calculations.
+          💡 <strong>Timestamp</strong> is immutable (actual purchase time). 
+          <strong> Report Date</strong> can be edited and is used for earnings calculations.
         </p>
       </div>
 
@@ -367,16 +360,16 @@ export default function ReportsPage() {
                     <th className="p-4 text-left text-sm font-medium text-surface-400">Customer</th>
                     <th className="p-4 text-left text-sm font-medium text-surface-400">Order</th>
                     <th className="p-4 text-left text-sm font-medium text-surface-400">
-                      <span className="text-surface-500">System Date</span>
+                      <span className="text-surface-500">Timestamp</span>
                     </th>
                     <th className="p-4 text-left text-sm font-medium text-surface-400">
-                      <span className="text-primary-400">Earnings Date</span>
+                      <span className="text-primary-400">Report Date</span>
                     </th>
                     <th className="p-4 text-right text-sm font-medium text-surface-400">Total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {transactions.map((tx, index) => (
+                  {transactions.map((tx) => (
                     <tr key={tx.id} className="border-b border-surface-800/50 hover:bg-surface-800/30">
                       <td className="p-4">
                         <input
@@ -387,7 +380,7 @@ export default function ReportsPage() {
                         />
                       </td>
                       <td className="p-4">
-                        <span className="text-surface-300 font-mono text-xs">{tx.id.substring(0, 8)}</span>
+                        <span className="text-white font-mono text-sm">{tx.transaction_number}</span>
                       </td>
                       <td className="p-4">
                         <div className="max-w-xs">

@@ -24,3 +24,4 @@ WHERE transaction_id IS NULL;
 -- Set default to generate new UUID for new transactions
 -- Note: We'll generate transaction_id in the application code for multi-product sales
 
+

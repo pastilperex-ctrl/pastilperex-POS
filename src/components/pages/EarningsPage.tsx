@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
 import { Sale } from '@/types/database'
-import { format, startOfDay, endOfDay, subDays, eachDayOfInterval, parseISO } from 'date-fns'
+import { format, startOfDay, endOfDay, startOfMonth, endOfMonth, subDays, eachDayOfInterval, parseISO } from 'date-fns'
 import {
   Chart as ChartJS,
   ArcElement,
@@ -42,17 +42,71 @@ const CHART_COLORS = [
   '#84cc16',
 ]
 
+interface OpexItem {
+  monthly_cost: number
+}
+
 export default function EarningsPage() {
   const [sales, setSales] = useState<Sale[]>([])
   const [loading, setLoading] = useState(true)
   const [viewMode, setViewMode] = useState<'today' | 'range'>('today')
   const [startDate, setStartDate] = useState<string>(format(subDays(new Date(), 7), 'yyyy-MM-dd'))
   const [endDate, setEndDate] = useState<string>(format(new Date(), 'yyyy-MM-dd'))
+  
+  // OPEX data
+  const [totalMonthlyOpex, setTotalMonthlyOpex] = useState(0)
+  const [monthlyRevenue, setMonthlyRevenue] = useState(0)
+  const [breakEvenDate, setBreakEvenDate] = useState<Date | null>(null)
+
+  const fetchOpexData = useCallback(async () => {
+    try {
+      const { data } = await supabase.from('opex').select('monthly_cost')
+      const total = (data || []).reduce((sum: number, item: OpexItem) => sum + item.monthly_cost, 0)
+      setTotalMonthlyOpex(total)
+    } catch (error) {
+      console.error('Error fetching OPEX:', error)
+    }
+  }, [])
+
+  const fetchMonthlySales = useCallback(async () => {
+    try {
+      const now = new Date()
+      const monthStart = startOfMonth(now)
+      const monthEnd = endOfMonth(now)
+
+      const { data } = await (supabase as any)
+        .from('sales')
+        .select('total, created_at')
+        .eq('cancelled', false)
+        .gte('created_at', monthStart.toISOString())
+        .lte('created_at', monthEnd.toISOString())
+        .order('created_at', { ascending: true })
+
+      const salesData = data || []
+      const totalRevenue = salesData.reduce((sum: number, s: any) => sum + s.total, 0)
+      setMonthlyRevenue(totalRevenue)
+
+      // Find break-even date
+      let runningTotal = 0
+      let foundBreakEven = false
+      for (const sale of salesData) {
+        runningTotal += sale.total
+        if (runningTotal >= totalMonthlyOpex && !foundBreakEven) {
+          setBreakEvenDate(new Date(sale.created_at))
+          foundBreakEven = true
+          break
+        }
+      }
+      if (!foundBreakEven) {
+        setBreakEvenDate(null)
+      }
+    } catch (error) {
+      console.error('Error fetching monthly sales:', error)
+    }
+  }, [totalMonthlyOpex])
 
   const fetchSales = useCallback(async () => {
     try {
-      // Fetch all sales first, then filter by store_sale_datetime in JS
-      // This is because Supabase might not have the column yet
       const { data, error } = await (supabase as any)
         .from('sales')
         .select('*')
@@ -96,23 +150,47 @@ export default function EarningsPage() {
   }, [viewMode, startDate, endDate])
 
   useEffect(() => {
+    fetchOpexData()
+  }, [fetchOpexData])
+
+  useEffect(() => {
+    if (totalMonthlyOpex > 0) {
+      fetchMonthlySales()
+    }
+  }, [totalMonthlyOpex, fetchMonthlySales])
+
+  useEffect(() => {
     fetchSales()
     
     // Auto-refresh every 30 seconds for live data when viewing today
     let interval: NodeJS.Timeout | null = null
     if (viewMode === 'today') {
-      interval = setInterval(fetchSales, 30000)
+      interval = setInterval(() => {
+        fetchSales()
+        fetchMonthlySales()
+      }, 30000)
     }
     
     return () => {
       if (interval) clearInterval(interval)
     }
-  }, [fetchSales, viewMode])
+  }, [fetchSales, fetchMonthlySales, viewMode])
 
   // Calculate totals
   const totalRevenue = sales.reduce((sum, s) => sum + s.total, 0)
-  const totalCost = sales.reduce((sum, s) => sum + (s.cost * s.qty), 0)
-  const totalProfit = totalRevenue - totalCost
+  const totalIngredientCost = sales.reduce((sum, s) => sum + (s.cost * s.qty), 0)
+  const totalOpexCost = sales.reduce((sum, s) => sum + ((s as any).opex_cost || 0) * s.qty, 0)
+  const totalCost = totalIngredientCost + totalOpexCost
+  
+  // Break-even calculations for current month
+  const isBreakEvenReached = monthlyRevenue >= totalMonthlyOpex
+  const amountUntilBreakEven = Math.max(0, totalMonthlyOpex - monthlyRevenue)
+  
+  // Adjusted profit calculation
+  // Before break-even: show OPEX as expense
+  // After break-even: OPEX is "covered", profit is higher
+  const effectiveExpenses = isBreakEvenReached ? totalIngredientCost : totalCost
+  const totalProfit = totalRevenue - effectiveExpenses
 
   // Customer type data for pie chart
   const customerTypeData = sales.reduce((acc, sale) => {
@@ -133,7 +211,7 @@ export default function EarningsPage() {
     return acc
   }, {} as Record<string, number>)
 
-  // Line chart data for date range - uses earnings_datetime for earnings tracking
+  // Line chart data for date range
   const getLineChartData = () => {
     if (viewMode !== 'range') return null
 
@@ -290,26 +368,65 @@ export default function EarningsPage() {
         </div>
       </div>
 
+      {/* OPEX Break-Even Card */}
+      <div className={`mb-6 p-4 rounded-lg border ${
+        isBreakEvenReached 
+          ? 'bg-green-500/10 border-green-500/20' 
+          : 'bg-yellow-500/10 border-yellow-500/20'
+      }`}>
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h3 className={`font-semibold ${isBreakEvenReached ? 'text-green-400' : 'text-yellow-400'}`}>
+              {isBreakEvenReached ? '✓ Break-Even Reached!' : 'Monthly OPEX Tracking'}
+            </h3>
+            {isBreakEvenReached ? (
+              <p className="text-green-400/80 text-sm mt-1">
+                Break-even reached on {breakEvenDate ? format(breakEvenDate, 'MMM d, yyyy h:mm a') : 'this month'}. 
+                OPEX is now covered, additional revenue contributes to profit.
+              </p>
+            ) : (
+              <p className="text-yellow-400/80 text-sm mt-1">
+                ₱{amountUntilBreakEven.toLocaleString(undefined, { minimumFractionDigits: 2 })} more needed to cover monthly OPEX
+              </p>
+            )}
+          </div>
+          <div className="text-right">
+            <p className="text-surface-400 text-xs">Monthly OPEX</p>
+            <p className={`text-xl font-bold font-mono ${isBreakEvenReached ? 'text-green-400' : 'text-yellow-400'}`}>
+              ₱{totalMonthlyOpex.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </p>
+            <p className="text-surface-500 text-xs mt-1">
+              Revenue: ₱{monthlyRevenue.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+            </p>
+          </div>
+        </div>
+        {/* Progress bar */}
+        <div className="mt-3">
+          <div className="w-full h-2 bg-surface-800 rounded-full overflow-hidden">
+            <div 
+              className={`h-full rounded-full transition-all ${isBreakEvenReached ? 'bg-green-500' : 'bg-yellow-500'}`}
+              style={{ width: `${Math.min(100, (monthlyRevenue / totalMonthlyOpex) * 100)}%` }}
+            />
+          </div>
+          <div className="flex justify-between mt-1 text-xs text-surface-500">
+            <span>₱0</span>
+            <span>{Math.min(100, (monthlyRevenue / totalMonthlyOpex) * 100).toFixed(1)}%</span>
+            <span>₱{totalMonthlyOpex.toLocaleString()}</span>
+          </div>
+        </div>
+      </div>
+
       {/* Today's note */}
       {viewMode === 'today' && (
-        <div className="mb-6 p-4 bg-green-500/10 border border-green-500/20 rounded-lg">
-          <p className="text-green-400 text-sm">
-            📊 Showing today&apos;s live data based on <strong>Earnings Date & Time</strong>. Auto-refreshes every 30 seconds.
-          </p>
-        </div>
-      )}
-
-      {/* Range note */}
-      {viewMode === 'range' && (
         <div className="mb-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-lg">
           <p className="text-blue-400 text-sm">
-            💡 Earnings are calculated based on <strong>Earnings Date & Time</strong> which can be edited in Reports.
+            📊 Showing today&apos;s live data based on <strong>Report Date</strong>. Auto-refreshes every 30 seconds.
           </p>
         </div>
       )}
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div className="card p-6">
           <div className="flex items-center gap-3 mb-2">
             <div className="w-10 h-10 rounded-lg bg-primary-500/10 flex items-center justify-center">
@@ -333,7 +450,24 @@ export default function EarningsPage() {
             </div>
             <div>
               <p className="text-surface-400 text-sm">Total Expenses</p>
-              <p className="text-2xl font-bold text-white font-mono">₱{totalCost.toFixed(2)}</p>
+              <p className="text-2xl font-bold text-white font-mono">₱{effectiveExpenses.toFixed(2)}</p>
+              {isBreakEvenReached && totalOpexCost > 0 && (
+                <p className="text-xs text-green-400">OPEX covered ✓</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="card p-6">
+          <div className="flex items-center gap-3 mb-2">
+            <div className="w-10 h-10 rounded-lg bg-yellow-500/10 flex items-center justify-center">
+              <svg className="w-5 h-5 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+              </svg>
+            </div>
+            <div>
+              <p className="text-surface-400 text-sm">Total OPEX</p>
+              <p className="text-2xl font-bold text-yellow-400 font-mono">₱{totalOpexCost.toFixed(2)}</p>
             </div>
           </div>
         </div>
@@ -456,5 +590,3 @@ export default function EarningsPage() {
     </div>
   )
 }
-
-

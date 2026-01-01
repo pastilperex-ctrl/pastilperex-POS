@@ -100,3 +100,4 @@ FROM information_schema.columns
 WHERE table_name = 'sales'
 ORDER BY ordinal_position;
 
+

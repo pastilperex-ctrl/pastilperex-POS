@@ -8,11 +8,11 @@ import NotificationBar from './NotificationBar'
 import SalesPage from './pages/SalesPage'
 import ReportsPage from './pages/ReportsPage'
 import InventoryPage from './pages/InventoryPage'
-import ProductsPage from './pages/ProductsPage'
 import EarningsPage from './pages/EarningsPage'
+import OPEXPage from './pages/OPEXPage'
 import SettingsPage from './pages/SettingsPage'
 
-type NavPage = 'sales' | 'reports' | 'inventory' | 'products' | 'earnings' | 'settings'
+type NavPage = 'sales' | 'reports' | 'inventory' | 'earnings' | 'opex' | 'settings'
 
 export default function Dashboard() {
   const { user } = useAuth()
@@ -42,10 +42,10 @@ export default function Dashboard() {
         return <ReportsPage />
       case 'inventory':
         return <InventoryPage />
-      case 'products':
-        return <ProductsPage />
       case 'earnings':
         return <EarningsPage />
+      case 'opex':
+        return <OPEXPage />
       case 'settings':
         return <SettingsPage />
       default:
@@ -75,6 +75,3 @@ export default function Dashboard() {
     </div>
   )
 }
-
-
-

@@ -21,7 +21,7 @@ export default function LoginPage() {
 
     const success = login(username, password);
     if (success) {
-      toast.success("Welcome to PerexPastil!");
+      toast.success("Welcome to KASHPOS!");
     } else {
       toast.error("Invalid username or password");
     }
@@ -74,7 +74,8 @@ export default function LoginPage() {
               />
             </svg>
           </div>
-          <h1 className="text-3xl font-bold text-white mb-2">PerexPastil</h1>
+          <h1 className="text-3xl font-bold text-white mb-1">KASHPOS</h1>
+          <p className="text-primary-400 text-sm font-medium mb-2">v2.0</p>
           <p className="text-surface-400">Sign in to your account</p>
         </div>
 

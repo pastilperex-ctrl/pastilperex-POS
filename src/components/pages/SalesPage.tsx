@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { supabase, getProductImageUrl } from '@/lib/supabase'
 import { PaymentMethod, CustomerType } from '@/types/database'
 import { useNotifications } from '@/contexts/NotificationContext'
+import { format } from 'date-fns'
 import toast from 'react-hot-toast'
 
 interface FinishedProduct {
@@ -11,6 +12,7 @@ interface FinishedProduct {
   name: string
   image_url: string | null
   selling_price: number
+  opex_cost: number
   created_at: string
   updated_at: string
 }
@@ -27,7 +29,7 @@ interface InventoryItem {
   name: string
   qty: number
   cost: number
-  unit_type: 'weight' | 'quantity'
+  unit_type: 'weight' | 'quantity' | 'volume'
 }
 
 interface CartItem {
@@ -95,16 +97,19 @@ export default function SalesPage() {
 
   // Get inventory stock in the same unit as ingredients
   const getInventoryInIngredientUnit = (item: InventoryItem): number => {
-    return item.unit_type === 'weight' ? item.qty * 1000 : item.qty
+    if (item.unit_type === 'weight') return item.qty * 1000 // kg to g
+    if (item.unit_type === 'volume') return item.qty * 1000 // L to ml
+    return item.qty // pieces
   }
 
-  // Calculate product cost based on ingredients
-  const calculateProductCost = (productId: string): number => {
-    const ingredients = productIngredients[productId] || []
-    return ingredients.reduce((total, ing) => {
+  // Calculate product cost based on ingredients + OPEX
+  const calculateProductCost = (product: FinishedProduct): number => {
+    const ingredients = productIngredients[product.id] || []
+    const ingredientCost = ingredients.reduce((total, ing) => {
       const item = inventoryItems.find(i => i.id === ing.item_id)
       return total + (item ? item.cost * ing.qty : 0)
     }, 0)
+    return ingredientCost + (product.opex_cost || 0)
   }
 
   // Cart calculations
@@ -118,6 +123,33 @@ export default function SalesPage() {
     selectedCustomerType && 
     selectedDineInTakeout && 
     paymentAmount >= cartTotal
+
+  // Generate transaction number (YY-MM-XXXXX format, resets monthly)
+  const generateTransactionNumber = async (): Promise<string> => {
+    const now = new Date()
+    const yearMonth = format(now, 'yy-MM')
+    
+    try {
+      // Get the highest transaction number for this month
+      const { data } = await supabase
+        .from('sales')
+        .select('transaction_number')
+        .like('transaction_number', `${yearMonth}-%`)
+        .order('transaction_number', { ascending: false })
+        .limit(1)
+
+      let nextNum = 1
+      if (data && data.length > 0 && data[0].transaction_number) {
+        const lastNum = parseInt(data[0].transaction_number.split('-')[2]) || 0
+        nextNum = lastNum + 1
+      }
+
+      return `${yearMonth}-${nextNum.toString().padStart(5, '0')}`
+    } catch (error) {
+      console.error('Error generating transaction number:', error)
+      return `${yearMonth}-00001`
+    }
+  }
 
   // Open modal for product
   const handleProductClick = (product: FinishedProduct) => {
@@ -145,12 +177,10 @@ export default function SalesPage() {
 
   // Handle quantity input change
   const handleQuantityChange = (value: string) => {
-    // Allow empty string for editing
     if (value === '') {
       setModalQuantity('')
       return
     }
-    // Only allow positive integers
     const num = parseInt(value)
     if (!isNaN(num) && num >= 0) {
       setModalQuantity(num.toString())
@@ -163,7 +193,6 @@ export default function SalesPage() {
       setCustomerPayment('')
       return
     }
-    // Allow decimal numbers
     const regex = /^\d*\.?\d{0,2}$/
     if (regex.test(value)) {
       setCustomerPayment(value)
@@ -179,7 +208,6 @@ export default function SalesPage() {
     }
 
     if (editingCartItem) {
-      // Update existing item
       setCart(cart.map(item => 
         item.product.id === editingCartItem.product.id 
           ? { ...item, quantity: qty }
@@ -187,7 +215,6 @@ export default function SalesPage() {
       ))
       toast.success('Cart updated')
     } else if (selectedProduct) {
-      // Add new item
       const existingIndex = cart.findIndex(item => item.product.id === selectedProduct.id)
       if (existingIndex >= 0) {
         const updatedCart = [...cart]
@@ -227,6 +254,7 @@ export default function SalesPage() {
 
     try {
       const transactionId = crypto.randomUUID()
+      const transactionNumber = await generateTransactionNumber()
 
       // Calculate ingredient deductions
       const ingredientDeductions: Record<string, number> = {}
@@ -237,19 +265,22 @@ export default function SalesPage() {
         }
       }
 
-      // Create sale records - base fields that always exist
+      // Create sale records
       const saleRecords = cart.map(item => ({
         transaction_id: transactionId,
+        transaction_number: transactionNumber,
         product_id: item.product.id,
         product_name: item.product.name,
         qty: item.quantity,
         unit_type: 'quantity' as const,
-        cost: calculateProductCost(item.product.id),
+        cost: calculateProductCost(item.product),
         selling_price: item.product.selling_price,
         total: item.quantity * item.product.selling_price,
         payment_method: selectedPaymentMethod,
         customer_type: selectedCustomerType,
         dine_in_takeout: selectedDineInTakeout,
+        customer_payment: paymentAmount,
+        opex_cost: item.product.opex_cost || 0,
       }))
       
       const { data: saleData, error: saleError } = await (supabase as any)
@@ -267,7 +298,11 @@ export default function SalesPage() {
         const item = inventoryItems.find(i => i.id === itemId)
         if (!item) continue
         
-        const deductionInStorageUnit = item.unit_type === 'weight' ? deduction / 1000 : deduction
+        // Convert deduction to storage unit
+        let deductionInStorageUnit = deduction
+        if (item.unit_type === 'weight') deductionInStorageUnit = deduction / 1000 // g to kg
+        if (item.unit_type === 'volume') deductionInStorageUnit = deduction / 1000 // ml to L
+        
         const newQty = Math.max(0, item.qty - deductionInStorageUnit)
         
         const { error: updateError } = await (supabase as any)
@@ -284,7 +319,7 @@ export default function SalesPage() {
         addRecentSale(saleData[0])
       }
 
-      toast.success(`Sale completed! Change: ₱${changeAmount.toFixed(2)}`)
+      toast.success(`Sale completed! Transaction: ${transactionNumber}`)
       clearCart()
       fetchData()
     } catch (error) {
@@ -471,7 +506,7 @@ export default function SalesPage() {
         <h3 className="text-lg font-semibold text-white mb-3">Products</h3>
         {availableProducts.length === 0 ? (
           <div className="card p-8 text-center">
-            <p className="text-surface-400">No products available. Add products in the Products section.</p>
+            <p className="text-surface-400">No products available. Create products in the Inventory section.</p>
           </div>
         ) : (
           <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">

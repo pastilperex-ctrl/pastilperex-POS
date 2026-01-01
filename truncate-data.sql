@@ -1,4 +1,4 @@
--- PerexPastil - Truncate All Data
+-- KASHPOS v2.0 - Truncate All Data
 -- Run this SQL in your Supabase SQL Editor to clear all stored data
 -- 
 -- ⚠️ WARNING: This will DELETE ALL DATA from the following tables:
@@ -9,6 +9,8 @@
 -- - payment_methods
 -- - customer_types
 -- - settings
+-- - opex
+-- - opex_settings
 --
 -- This action CANNOT be undone!
 -- NOTE: Product images in Supabase Storage must be deleted separately via the Storage dashboard.
@@ -32,6 +34,10 @@ TRUNCATE TABLE customer_types CASCADE;
 -- Delete settings
 TRUNCATE TABLE settings CASCADE;
 
+-- Delete OPEX data
+TRUNCATE TABLE opex CASCADE;
+TRUNCATE TABLE opex_settings CASCADE;
+
 -- ============================================
 -- RE-INSERT DEFAULT DATA (optional)
 -- ============================================
@@ -48,6 +54,8 @@ TRUNCATE TABLE settings CASCADE;
 --   ('Student', '#f59e0b'),
 --   ('Senior', '#ec4899')
 -- ON CONFLICT (name) DO NOTHING;
+
+-- INSERT INTO opex_settings (target_monthly_sales) VALUES (100);
 
 -- ============================================
 -- VERIFICATION
@@ -67,4 +75,8 @@ SELECT 'payment_methods', COUNT(*) FROM payment_methods
 UNION ALL
 SELECT 'customer_types', COUNT(*) FROM customer_types
 UNION ALL
-SELECT 'settings', COUNT(*) FROM settings;
+SELECT 'settings', COUNT(*) FROM settings
+UNION ALL
+SELECT 'opex', COUNT(*) FROM opex
+UNION ALL
+SELECT 'opex_settings', COUNT(*) FROM opex_settings;
